@@ -286,12 +286,13 @@ impl<T, const N: usize> VLock<T, N> {
     where
         I: FnOnce() -> T,
     {
-        let mut acquire_attempts = ACQUIRE_ATTEMPTS;
+        let mut remaining = ACQUIRE_ATTEMPTS;
         loop {
-            for attempt in 0..acquire_attempts {
+            'attempt: loop {
                 if length == 1 {
-                    break;
+                    break 'attempt;
                 }
+
                 for (offset, uninit) in unsafe { &*self.data.get() }
                     .iter()
                     .enumerate()
@@ -308,19 +309,24 @@ impl<T, const N: usize> VLock<T, N> {
                         return offset;
                     }
                 }
-                // Wait unless it's the final attempt.
-                if attempt < acquire_attempts.saturating_sub(1) {
-                    // Spin with exponential waiting time and only then yield
-                    // YIELDS_BEFORE_INIT times.
-                    if attempt < acquire_attempts.saturating_sub(YIELDS_BEFORE_INIT + 1) {
-                        for _ in 0..(1 << attempt) {
-                            hint::spin_loop();
-                        }
-                    } else {
-                        thread::yield_now();
-                    }
+
+                // That was the last attempt. Keep it that way indefinitely.
+                if remaining == 1 {
+                    break 'attempt;
                 }
+
+                // Spin with exponential waiting time and only then yield
+                // YIELDS_BEFORE_INIT times.
+                if remaining > YIELDS_BEFORE_INIT + 1 {
+                    for _ in 0..1 << ACQUIRE_ATTEMPTS.saturating_sub(remaining) {
+                        hint::spin_loop();
+                    }
+                } else {
+                    thread::yield_now();
+                }
+                remaining -= 1;
             }
+
             // Try to initialize a new version, if there's room for that.
             if length < N {
                 unsafe { self.at_mut(length) }.write(Data {
@@ -329,9 +335,10 @@ impl<T, const N: usize> VLock<T, N> {
                 });
                 return length;
             }
-            // No new versions can be initialized and previous versions are
-            // busy. No point to spin, yield after every attempt.
-            acquire_attempts = 1;
+
+            // No new versions can be initialized and previous versions are busy.
+            // From this point on there will be just one attempt to acquire,
+            // yielding in between.
             thread::yield_now();
         }
     }
