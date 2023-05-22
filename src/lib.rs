@@ -211,6 +211,17 @@ impl<T, const N: usize> VLock<T, N> {
         }
     }
 
+    #[inline]
+    unsafe fn at(&self, offset: usize) -> &mem::MaybeUninit<Data<T>> {
+        &(&*self.data.get())[offset]
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    unsafe fn at_mut(&self, offset: usize) -> &mut mem::MaybeUninit<Data<T>> {
+        &mut (&mut *self.data.get())[offset]
+    }
+
     /// Acquires a reference to the current version of `T`.
     ///
     /// This call never blocks. However, holding on to a version for too long
@@ -253,9 +264,8 @@ impl<T, const N: usize> VLock<T, N> {
             "counter overflow"
         );
 
-        let data = unsafe { &*self.data.get() };
         ReadRef {
-            ptr: data[state & Self::OFFSET].as_ptr(),
+            ptr: unsafe { self.at(state & Self::OFFSET) }.as_ptr(),
             phantom: marker::PhantomData,
         }
     }
@@ -276,14 +286,13 @@ impl<T, const N: usize> VLock<T, N> {
     where
         I: FnOnce() -> T,
     {
-        let data = unsafe { &mut *self.data.get() };
         let mut acquire_attempts = ACQUIRE_ATTEMPTS;
         loop {
             for attempt in 0..acquire_attempts {
                 if length == 1 {
                     break;
                 }
-                for (offset, uninit) in data
+                for (offset, uninit) in unsafe { &*self.data.get() }
                     .iter()
                     .enumerate()
                     .filter(|(offset, _)| *offset != curr_offset && *offset < length)
@@ -314,7 +323,7 @@ impl<T, const N: usize> VLock<T, N> {
             }
             // Try to initialize a new version, if there's room for that.
             if length < N {
-                data[length].write(Data {
+                unsafe { self.at_mut(length) }.write(Data {
                     state: atomic::AtomicUsize::new(length),
                     value: init(),
                 });
@@ -391,14 +400,15 @@ impl<T, const N: usize> VLock<T, N> {
             length = length.saturating_add(1);
         }
 
-        let item = unsafe { (&*self.data.get())[offset].assume_init_ref() };
-        f(&item.value, unsafe {
-            &mut (&mut *self.data.get())[new_offset].assume_init_mut().value
-        });
+        let version = unsafe { self.at(offset).assume_init_ref() };
+        f(
+            &version.value,
+            &mut unsafe { self.at_mut(new_offset).assume_init_mut() }.value,
+        );
 
-        // Update the state to point to the new offset and reset a counter for
-        // the that version. This is the point when the new read() calls start
-        // to refer to the new version.
+        // Update the state to point to the new offset and reset the counter for
+        // that version. This is the point when the new read() calls start to
+        // refer to the new version.
         //
         // Changes to the offset are behind a lock. Regarding the counter, we are
         // interested only in atomic operation in read(). So, using Relaxed here
@@ -417,10 +427,11 @@ impl<T, const N: usize> VLock<T, N> {
         // are dropped.
         //
         // Relaxed should be OK. Next access to that version is in subsequent
-        // write() call. If the counter happens to go to 0 at this point, the
-        // next access to that item is synchronized by the lock. Otherwise,
+        // update() call. If the counter happens to go to 0 at this point, the
+        // next access to that version is synchronized by the lock. Otherwise,
         // synchronization is ensured via Acquire load.
-        item.state
+        version
+            .state
             .fetch_add(prev_state & Self::COUNTER, atomic::Ordering::Relaxed);
 
         self.unlock(length);
@@ -439,11 +450,8 @@ impl<T, const N: usize> VLock<T, N> {
     /// assert_eq!(*lock.get_mut(), 10);
     /// ```
     pub fn get_mut(&mut self) -> &mut T {
-        let offset = self.state.load(atomic::Ordering::Relaxed) & Self::OFFSET;
-        unsafe {
-            let data = &mut *self.data.get();
-            &mut data[offset].assume_init_mut().value
-        }
+        let offset = *self.state.get_mut() & Self::OFFSET;
+        &mut unsafe { self.at_mut(offset).assume_init_mut() }.value
     }
 }
 
@@ -487,8 +495,10 @@ impl<T: fmt::Debug, const N: usize> fmt::Debug for VLock<T, N> {
 impl<T, const N: usize> Drop for VLock<T, N> {
     #[inline]
     fn drop(&mut self) {
-        let data = unsafe { &mut *self.data.get() };
-        for uninit in data.iter_mut().take(*self.length.get_mut()) {
+        for uninit in unsafe { &mut *self.data.get() }
+            .iter_mut()
+            .take(*self.length.get_mut())
+        {
             unsafe {
                 uninit.assume_init_drop();
             }
