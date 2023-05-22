@@ -98,7 +98,7 @@
 //!         thread::sleep(time::Duration::from_millis(1));
 //!     }
 //!     lock_clone.update(
-//!         |value| {
+//!         |_, value| {
 //!             value.clear();
 //!             value.push_str("bye!");
 //!         },
@@ -107,7 +107,7 @@
 //! });
 //! thread::sleep(time::Duration::from_millis(2));
 //! lock.update(
-//!     |value| {
+//!     |_, value| {
 //!         value.clear();
 //!         value.push_str("here's some text for you");
 //!     },
@@ -160,16 +160,16 @@ const LOCKED: usize = 0;
 /// {
 ///     let read1 = lock.read();
 ///     // this triggers a new version to be initialized with 2
-///     lock.update(|value| *value += 20, || 2);
+///     lock.update(|_, value| *value += 20, || 2);
 ///     let read2 = lock.read();
 ///     assert_eq!(*read1, 10);
 ///     assert_eq!(*read2, 22);
 ///     // attempt to update here will block until read1 is dropped
 /// } // read1 is dropped, allowing more updates
 ///
-/// // it is valid to read while updating
+/// // current version can be accessed directly when updating
 /// {
-///     lock.update(|value| *value = *lock.read() + 8, || 2);
+///     lock.update(|curr, value| *value = *curr + 8, || 2);
 ///     let read1 = lock.read();
 ///     assert_eq!(*read1, 30);
 /// }
@@ -337,9 +337,10 @@ impl<T, const N: usize> VLock<T, N> {
         );
     }
 
-    /// Locks this `VLock` and calls `f` on one of the previously used or
-    /// a newly initialized version, blocking the current thread if the lock
-    /// can't be acquired or if all `N` versions of data are in use.
+    /// Locks this `VLock` and calls `f` with the current and one of the
+    /// previously used or a newly initialized versions, blocking the current
+    /// thread if the lock can't be acquired or if all `N` versions of data are
+    /// in use.
     ///
     /// If a new version needs initialization, `init` will be called before
     /// `f`. This happens when all initialized versions are in use and the
@@ -370,14 +371,14 @@ impl<T, const N: usize> VLock<T, N> {
     ///
     /// let lock: VLock<_, 2> = 10.into();
     /// assert_eq!(*lock.read(), 10);
-    /// lock.update(|value| *value += 20, || 13);
+    /// lock.update(|_, value| *value += 20, || 13);
     /// assert_eq!(*lock.read(), 33);
-    /// lock.update(|value| *value += 20, || 13);
+    /// lock.update(|_, value| *value += 20, || 13);
     /// assert_eq!(*lock.read(), 30);
     /// ```
     pub fn update<F, I>(&self, f: F, init: I)
     where
-        F: FnOnce(&mut T),
+        F: FnOnce(&T, &mut T),
         I: FnOnce() -> T,
     {
         let mut length = self.lock();
@@ -390,8 +391,10 @@ impl<T, const N: usize> VLock<T, N> {
             length = length.saturating_add(1);
         }
 
-        let data = unsafe { &mut *self.data.get() };
-        f(&mut unsafe { data[new_offset].assume_init_mut() }.value);
+        let item = unsafe { (&*self.data.get())[offset].assume_init_ref() };
+        f(&item.value, unsafe {
+            &mut (&mut *self.data.get())[new_offset].assume_init_mut().value
+        });
 
         // Update the state to point to the new offset and reset a counter for
         // the that version. This is the point when the new read() calls start
@@ -417,9 +420,7 @@ impl<T, const N: usize> VLock<T, N> {
         // write() call. If the counter happens to go to 0 at this point, the
         // next access to that item is synchronized by the lock. Otherwise,
         // synchronization is ensured via Acquire load.
-        let prev_version = unsafe { data[offset].assume_init_ref() };
-        prev_version
-            .state
+        item.state
             .fetch_add(prev_state & Self::COUNTER, atomic::Ordering::Relaxed);
 
         self.unlock(length);
@@ -541,7 +542,7 @@ impl<T, const N: usize> PartialEq for ReadRef<'_, T, N> {
     /// let read2 = lock.read();
     /// assert_eq!(read1, read2);
     ///
-    /// lock.update(|value| *value = 10, || 0);
+    /// lock.update(|curr, value| *value = *curr, || 0);
     /// let read3 = lock.read();
     /// assert_ne!(read2, read3);
     /// assert_eq!(*read2, *read3);
