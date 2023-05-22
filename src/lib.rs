@@ -293,21 +293,22 @@ impl<T, const N: usize> VLock<T, N> {
                     break 'attempt;
                 }
 
-                for (offset, uninit) in unsafe { &*self.data.get() }
+                if let Some(state) = unsafe { &*self.data.get() }
                     .iter()
                     .enumerate()
-                    .filter(|(offset, _)| *offset != curr_offset && *offset < length)
-                {
+                    .take(length)
+                    .filter(|(offset, _)| *offset != curr_offset)
+                    .map(|(_, uninit)| unsafe { uninit.assume_init_ref() })
                     // These versions are not "active", i.e. there are no new reads to
                     // these happening at this point, only some old readers may be
                     // holding on to these.
-                    let version = unsafe { uninit.assume_init_ref() };
+                    //
                     // Taking Acquire here to ensure that all access to that version
                     // has completed before it can be reused.
-                    let counter = version.state.load(atomic::Ordering::Acquire) & Self::COUNTER;
-                    if counter == 0 {
-                        return offset;
-                    }
+                    .map(|version| version.state.load(atomic::Ordering::Acquire))
+                    .find(|&state| state & Self::COUNTER == 0)
+                {
+                    return state & Self::OFFSET;
                 }
 
                 // That was the last attempt. Keep it that way indefinitely.
