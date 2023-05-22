@@ -33,7 +33,7 @@
 //! As a bonus, the implementation is simple with about 200 lines of actual
 //! code and without any external dependencies.
 //!
-//! [^1]: Based on synthetic benchmarks on x86_64 laptops, read performance was
+//! [^1]: Based on synthetic benchmarks on `x86_64` laptops, read performance was
 //! 1.3-2.0 times faster than `ArcSwap`, and may be order of magnitude faster
 //! than fastest `RwLock` implementation in certain cases. Writes of `VLock`
 //! are more efficient than `ArcSwap`. Comparing to `RwLock`, writes are
@@ -42,7 +42,7 @@
 //! mixed: in some scenarios reads of `VLock` was 4 times slower, in some about
 //! 1:1 and in other 2 times quicker. Although write performance of `VLock`
 //! is significantly worse than that of `SeqLock`, it can be used for non-copy
-//! types.  Note that write performance of `VLock` may degrade significantly
+//! types. Note that write performance of `VLock` may degrade significantly
 //! when readers are not progressing and `N` is small, in other words `VLock`
 //! is susceptible to write starvation by prioritizing reads.
 //!
@@ -347,7 +347,7 @@ impl<T, const N: usize> VLock<T, N> {
     /// number of versions is less than `N`.
     ///
     /// Note, that there is no guarantee which exact non-current version will
-    /// be passed to `f`, because it depends on reader access patterns.  Unless
+    /// be passed to `f`, because it depends on reader access patterns. Unless
     /// `N` equals 2, of course.
     ///
     /// Current implementation tries to avoid initializing new versions by
