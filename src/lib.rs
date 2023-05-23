@@ -198,6 +198,7 @@ impl<T, const N: usize> VLock<T, N> {
 
     /// Creates a new unlocked instance of `VLock` with the initial version.
     pub fn new(value: T) -> Self {
+        // SAFETY: The assume_init is for the array of MaybeUninits.
         let mut data: [mem::MaybeUninit<Data<T>>; N] =
             unsafe { mem::MaybeUninit::uninit().assume_init() };
         data[0].write(Data {
@@ -265,6 +266,10 @@ impl<T, const N: usize> VLock<T, N> {
         );
 
         ReadRef {
+            // SAFETY: Current offset always points to init data - see new() and
+            // update(). No mutable borrow can happen: update() mutates non-current
+            // version and prevents selecting versions for update with non-zero
+            // counter, which is guaranteed until this ReadRef is dropped.
             ptr: unsafe { self.at(state & Self::OFFSET) }.as_ptr(),
             phantom: marker::PhantomData,
         }
@@ -293,12 +298,15 @@ impl<T, const N: usize> VLock<T, N> {
                     break 'attempt;
                 }
 
+                // SAFETY: No concurrent mutations can happen because of the lock.
                 if let Some(state) = unsafe { &*self.data.get() }
                     .iter()
                     .enumerate()
                     .take(length)
                     .filter(|(offset, _)| *offset != curr_offset)
-                    .map(|(_, uninit)| unsafe { uninit.assume_init_ref() })
+                    // SAFETY: Length counts inits. It's safe to assume that
+                    // the first length MaybeUninits are inits.
+                    .map(|(_, init)| unsafe { init.assume_init_ref() })
                     // These versions are not "active", i.e. there are no new reads to
                     // these happening at this point, only some old readers may be
                     // holding on to these.
@@ -330,6 +338,8 @@ impl<T, const N: usize> VLock<T, N> {
 
             // Try to initialize a new version, if there's room for that.
             if length < N {
+                // SAFETY: The version at length is uninit. It is safe to init.
+                // No concurrent mutations can happen because of the lock.
                 unsafe { self.at_mut(length) }.write(Data {
                     state: atomic::AtomicUsize::new(length),
                     value: init(),
@@ -408,9 +418,16 @@ impl<T, const N: usize> VLock<T, N> {
             length = length.saturating_add(1);
         }
 
+        // SAFETY: Current version is init, which happened either in new() or
+        // in acquire() during previous update(). Next mutable borrow at this
+        // offset can happen only in a subsequent update(), which is serialized.
         let version = unsafe { self.at(offset).assume_init_ref() };
         f(
             &version.value,
+            // SAFETY: Data at new_offset is ensured to be init and new_offset
+            // cannot overlap with the current offset. Reference counting tracks
+            // that there are no active "borrows". See acquire() for details.
+            // No concurrent mutations can happen because of the lock.
             &mut unsafe { self.at_mut(new_offset).assume_init_mut() }.value,
         );
 
@@ -459,6 +476,8 @@ impl<T, const N: usize> VLock<T, N> {
     /// ```
     pub fn get_mut(&mut self) -> &mut T {
         let offset = *self.state.get_mut() & Self::OFFSET;
+        // SAFETY: Exclusive mutable access is guaranteed by the compiler.
+        // Current offset always points to init data - see new() and update().
         &mut unsafe { self.at_mut(offset).assume_init_mut() }.value
     }
 }
@@ -486,16 +505,10 @@ impl<T: fmt::Debug, const N: usize> fmt::Debug for VLock<T, N> {
                 .field("state", &self.state)
                 .finish_non_exhaustive()
         } else {
-            let data: Vec<_> = unsafe { &*self.data.get() }
-                .iter()
-                .take(length)
-                .map(|v| unsafe { v.assume_init_ref() })
-                .collect();
             f.debug_struct("VLock")
                 .field("state", &self.state)
                 .field("length", &length)
-                .field("data", &data)
-                .finish()
+                .finish_non_exhaustive()
         }
     }
 }
@@ -503,12 +516,15 @@ impl<T: fmt::Debug, const N: usize> fmt::Debug for VLock<T, N> {
 impl<T, const N: usize> Drop for VLock<T, N> {
     #[inline]
     fn drop(&mut self) {
-        for uninit in unsafe { &mut *self.data.get() }
+        // SAFETY: Exclusive mutable access is guaranteed by the compiler.
+        for init in unsafe { &mut *self.data.get() }
             .iter_mut()
             .take(*self.length.get_mut())
         {
+            // SAFETY: Length counts inits. It's safe to assume that the first
+            // length MaybeUninits are inits.
             unsafe {
-                uninit.assume_init_drop();
+                init.assume_init_drop();
             }
         }
     }
@@ -608,6 +624,9 @@ impl<T, const N: usize> ops::Deref for ReadRef<'_, T, N> {
 
     #[inline]
     fn deref(&self) -> &T {
+        // SAFETY: Pointer is non-null based on the context where it is set.
+        // No mutable borrow of the same address can happen, until Self is
+        // dropped due to reference counting. See VLock::read() for details.
         &unsafe { &*self.ptr }.value
     }
 }
@@ -618,6 +637,8 @@ impl<T, const N: usize> Drop for ReadRef<'_, T, N> {
     #[inline]
     fn drop(&mut self) {
         // Release to synchronize later reuse of the data this points to.
+        //
+        // SAFETY: Pointer is non-null based on the context where it is set.
         unsafe { &*self.ptr }.state.fetch_sub(
             /*STEP*/ N.next_power_of_two(),
             atomic::Ordering::Release,
