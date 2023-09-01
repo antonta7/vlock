@@ -122,7 +122,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 
-use std::{borrow, cell, fmt, hint, marker, mem, ops, ptr, sync::atomic, thread};
+use std::{borrow, cell, fmt, hash, hint, marker, mem, ops, ptr, sync::atomic, thread};
 
 // The number of attempts to acquire one of old versions for updating, spinning
 // in between attempts exponentially.
@@ -654,7 +654,38 @@ impl<T, const N: usize> fmt::Pointer for ReadRef<'_, T, N> {
     }
 }
 
-impl<T, const N: usize> ops::Deref for ReadRef<'_, T, N> {
+impl<T, const N: usize> hash::Hash for ReadRef<'_, T, N> {
+    /// Feeds the address of a pointer to calculate a hash, which is unique
+    /// per version.
+    ///
+    /// Dereference to hash the value behind the pointer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// use vlock::VLock;
+    ///
+    /// let lock: VLock<_, 2> = 10.into();
+    /// let mut ptr_set = HashSet::new();
+    /// let mut val_set = HashSet::new();
+    /// assert!(ptr_set.insert(lock.read()));
+    /// assert!(val_set.insert(*lock.read()));
+    /// assert!(!ptr_set.insert(lock.read()));
+    /// assert!(!val_set.insert(*lock.read()));
+    ///
+    /// lock.update(|curr, value| *value = *curr, || 0);
+    /// assert!(ptr_set.insert(lock.read()));
+    /// assert!(!val_set.insert(*lock.read()));
+    /// ```
+    #[inline]
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.ptr.hash(state);
+    }
+}
+
+impl<'a, T, const N: usize> ops::Deref for ReadRef<'a, T, N> {
     type Target = T;
 
     #[inline]
