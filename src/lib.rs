@@ -497,7 +497,42 @@ impl<T: Default, const N: usize> Default for VLock<T, N> {
 unsafe impl<T: Send + Sync, const N: usize> Send for VLock<T, N> {}
 unsafe impl<T: Send + Sync, const N: usize> Sync for VLock<T, N> {}
 
-impl<T: fmt::Debug, const N: usize> fmt::Debug for VLock<T, N> {
+impl<T: Clone, const N: usize> Clone for VLock<T, N> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self::new(self.read().clone())
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        let offset = *self.state.get_mut() & Self::OFFSET;
+        // SAFETY: Exclusive mutable access is guaranteed by the compiler.
+        let current = unsafe { self.at_mut(offset).assume_init_mut() };
+        *current.state.get_mut() = 0;
+        current.value.clone_from(&source.read());
+        if offset != 0 {
+            // SAFETY: Exclusive mutable access is guaranteed by the compiler.
+            let first = unsafe { self.at_mut(0).assume_init_mut() };
+            mem::swap(first, current);
+        }
+        *self.state.get_mut() = 0;
+
+        // SAFETY: Exclusive mutable access is guaranteed by the compiler.
+        for init in unsafe { &mut *self.data.get() }
+            .iter_mut()
+            .take(*self.length.get_mut())
+            .skip(1)
+        {
+            // SAFETY: Length counts inits. It's safe to assume that the first
+            // length MaybeUninits are inits.
+            let state = &mut unsafe { init.assume_init_mut() }.state;
+            assert_eq!(*state.get_mut() & Self::COUNTER, 0);
+            unsafe { init.assume_init_drop() };
+        }
+        *self.length.get_mut() = 1;
+    }
+}
+
+impl<T, const N: usize> fmt::Debug for VLock<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let length = self.length.load(atomic::Ordering::Relaxed);
         if length == LOCKED {
