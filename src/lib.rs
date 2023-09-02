@@ -407,8 +407,38 @@ impl<T, const N: usize> VLock<T, N> {
     /// lock.update(|_, value| *value += 20, || 13);
     /// assert_eq!(*lock.read(), 30);
     /// ```
+    #[inline(always)]
     pub fn update<F, I>(&self, f: F, init: I)
     where
+        F: FnOnce(&T, &mut T),
+        I: FnOnce() -> T,
+    {
+        self.compare_update(|_| true, f, init);
+    }
+
+    /// Same as [`VLock::update`], except that `pred` is called under a lock
+    /// with the current version to determine whether the update should proceed
+    /// or not. The return value indicates whether the update was completed.
+    ///
+    /// # Panics
+    ///
+    /// See [`VLock::update`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vlock::VLock;
+    ///
+    /// let lock: VLock<_, 2> = 10.into();
+    /// assert_eq!(*lock.read(), 10);
+    /// assert!(!lock.compare_update(|curr| *curr > 30, |_, value| *value += 20, || 13));
+    /// assert_eq!(*lock.read(), 10);
+    /// assert!(lock.compare_update(|curr| *curr < 30, |_, value| *value += 20, || 13));
+    /// assert_eq!(*lock.read(), 33);
+    /// ```
+    pub fn compare_update<P, F, I>(&self, pred: P, f: F, init: I) -> bool
+    where
+        P: FnOnce(&T) -> bool,
         F: FnOnce(&T, &mut T),
         I: FnOnce() -> T,
     {
@@ -417,15 +447,20 @@ impl<T, const N: usize> VLock<T, N> {
         // lock which was acquired just above.
         let offset = self.state.load(atomic::Ordering::Relaxed) & Self::OFFSET;
 
-        let new_offset = self.acquire(offset, length, init);
-        if new_offset == length {
-            length = length.saturating_add(1);
-        }
-
         // SAFETY: Current version is init, which happened either in new() or
         // in acquire() during previous update(). Next mutable borrow at this
         // offset can happen only in a subsequent update(), which is serialized.
         let version = unsafe { self.at(offset).assume_init_ref() };
+
+        if !pred(&version.value) {
+            self.unlock(length);
+            return false;
+        }
+
+        let new_offset = self.acquire(offset, length, init);
+        if new_offset == length {
+            length = length.saturating_add(1);
+        }
         f(
             &version.value,
             // SAFETY: Data at new_offset is ensured to be init and new_offset
@@ -464,6 +499,7 @@ impl<T, const N: usize> VLock<T, N> {
             .fetch_add(prev_state & Self::COUNTER, atomic::Ordering::Relaxed);
 
         self.unlock(length);
+        true
     }
 
     /// Returns a mutable reference to the current version.
