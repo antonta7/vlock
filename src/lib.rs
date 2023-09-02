@@ -121,6 +121,7 @@
 
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::inline_always)]
 
 use std::{borrow, cell, fmt, hash, hint, marker, mem, ops, ptr, sync::atomic, thread};
 
@@ -197,6 +198,7 @@ impl<T, const N: usize> VLock<T, N> {
     const COUNTER: usize = !Self::OFFSET;
 
     /// Creates a new unlocked instance of `VLock` with the initial version.
+    #[inline(always)]
     pub fn new(value: T) -> Self {
         // SAFETY: The assume_init is for the array of MaybeUninits.
         let mut data: [mem::MaybeUninit<Data<T>>; N] =
@@ -212,13 +214,13 @@ impl<T, const N: usize> VLock<T, N> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     unsafe fn at(&self, offset: usize) -> &mem::MaybeUninit<Data<T>> {
         &(&*self.data.get())[offset]
     }
 
     #[allow(clippy::mut_from_ref)]
-    #[inline]
+    #[inline(always)]
     unsafe fn at_mut(&self, offset: usize) -> &mut mem::MaybeUninit<Data<T>> {
         &mut (&mut *self.data.get())[offset]
     }
@@ -253,6 +255,8 @@ impl<T, const N: usize> VLock<T, N> {
     ///     assert_eq!(*value, 10);
     /// } // the access is released after value is dropped
     /// ```
+    #[must_use]
+    #[inline(always)]
     pub fn read(&self) -> ReadRef<'_, T, N> {
         // Relaxed is OK. Even if the old version is retrieved just before the
         // update happens, the counter will correctly reflect the state, because
@@ -275,7 +279,7 @@ impl<T, const N: usize> VLock<T, N> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn lock(&self) -> usize {
         loop {
             let value = self.length.swap(LOCKED, atomic::Ordering::Acquire);
@@ -286,7 +290,7 @@ impl<T, const N: usize> VLock<T, N> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn acquire<I>(&self, curr_offset: usize, length: usize, init: I) -> usize
     where
         I: FnOnce() -> T,
@@ -354,7 +358,7 @@ impl<T, const N: usize> VLock<T, N> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn unlock(&self, value: usize) {
         assert_ne!(value, LOCKED, "locking unlock");
         assert_eq!(
@@ -474,6 +478,7 @@ impl<T, const N: usize> VLock<T, N> {
     /// let mut lock: VLock<_, 2> = 10.into();
     /// assert_eq!(*lock.get_mut(), 10);
     /// ```
+    #[inline(always)]
     pub fn get_mut(&mut self) -> &mut T {
         let offset = *self.state.get_mut() & Self::OFFSET;
         // SAFETY: Exclusive mutable access is guaranteed by the compiler.
@@ -483,12 +488,14 @@ impl<T, const N: usize> VLock<T, N> {
 }
 
 impl<T, const N: usize> From<T> for VLock<T, N> {
+    #[inline(always)]
     fn from(value: T) -> Self {
         VLock::new(value)
     }
 }
 
 impl<T: Default, const N: usize> Default for VLock<T, N> {
+    #[inline(always)]
     fn default() -> Self {
         VLock::new(T::default())
     }
@@ -498,7 +505,7 @@ unsafe impl<T: Send + Sync, const N: usize> Send for VLock<T, N> {}
 unsafe impl<T: Send + Sync, const N: usize> Sync for VLock<T, N> {}
 
 impl<T: Clone, const N: usize> Clone for VLock<T, N> {
-    #[inline]
+    #[inline(always)]
     fn clone(&self) -> Self {
         Self::new(self.read().clone())
     }
@@ -549,7 +556,7 @@ impl<T, const N: usize> fmt::Debug for VLock<T, N> {
 }
 
 impl<T, const N: usize> Drop for VLock<T, N> {
-    #[inline]
+    #[inline(always)]
     fn drop(&mut self) {
         // SAFETY: Exclusive mutable access is guaranteed by the compiler.
         for init in unsafe { &mut *self.data.get() }
@@ -616,39 +623,42 @@ impl<T, const N: usize> PartialEq for ReadRef<'_, T, N> {
     /// assert_ne!(read2, read3);
     /// assert_eq!(*read2, *read3);
     /// ```
-    #[inline]
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.ptr == other.ptr
     }
 }
 
 impl<T, const N: usize> AsRef<T> for ReadRef<'_, T, N> {
-    #[inline]
+    #[inline(always)]
     fn as_ref(&self) -> &T {
         self
     }
 }
 
 impl<T, const N: usize> borrow::Borrow<T> for ReadRef<'_, T, N> {
-    #[inline]
+    #[inline(always)]
     fn borrow(&self) -> &T {
         self
     }
 }
 
 impl<T: fmt::Debug, const N: usize> fmt::Debug for ReadRef<'_, T, N> {
+    #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
 impl<T: fmt::Display, const N: usize> fmt::Display for ReadRef<'_, T, N> {
+    #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&**self, f)
     }
 }
 
 impl<T, const N: usize> fmt::Pointer for ReadRef<'_, T, N> {
+    #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Pointer::fmt(&ptr::addr_of!(**self), f)
     }
@@ -679,7 +689,7 @@ impl<T, const N: usize> hash::Hash for ReadRef<'_, T, N> {
     /// assert!(ptr_set.insert(lock.read()));
     /// assert!(!val_set.insert(*lock.read()));
     /// ```
-    #[inline]
+    #[inline(always)]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.ptr.hash(state);
     }
@@ -688,7 +698,7 @@ impl<T, const N: usize> hash::Hash for ReadRef<'_, T, N> {
 impl<'a, T, const N: usize> ops::Deref for ReadRef<'a, T, N> {
     type Target = T;
 
-    #[inline]
+    #[inline(always)]
     fn deref(&self) -> &T {
         // SAFETY: Pointer is non-null based on the context where it is set.
         // No mutable borrow of the same address can happen, until Self is
@@ -700,7 +710,7 @@ impl<'a, T, const N: usize> ops::Deref for ReadRef<'a, T, N> {
 unsafe impl<T: Sync, const N: usize> Sync for ReadRef<'_, T, N> {}
 
 impl<T, const N: usize> Drop for ReadRef<'_, T, N> {
-    #[inline]
+    #[inline(always)]
     fn drop(&mut self) {
         // Release to synchronize later reuse of the data this points to.
         //
