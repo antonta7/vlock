@@ -593,7 +593,7 @@ struct Data<T> {
 /// may return a newer version, however.
 ///
 /// [`read`]: VLock::read
-pub struct ReadRef<'a, T, const N: usize> {
+pub struct ReadRef<'a, T: 'a, const N: usize> {
     ptr: *const Data<T>,
     phantom: marker::PhantomData<&'a Data<T>>,
 }
@@ -705,6 +705,7 @@ impl<'a, T, const N: usize> ops::Deref for ReadRef<'a, T, N> {
     }
 }
 
+unsafe impl<T: Sync, const N: usize> Send for ReadRef<'_, T, N> {}
 unsafe impl<T: Sync, const N: usize> Sync for ReadRef<'_, T, N> {}
 
 impl<T, const N: usize> Drop for ReadRef<'_, T, N> {
