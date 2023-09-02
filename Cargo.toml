@@ -3,4 +3,11 @@ name = "vlock"
 version = "0.1.0"
 edition = "2021"
 
+authors = ["Anton Tereshchenkov"]
+description = "A fast and scalable multi-version shared state lock with wait-free read access."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/antonta0/vlock"
+keywords = ["concurrency", "lock", "rwlock", "thread", "wait-free"]
+categories = ["concurrency", "memory-management"]
+
 [dependencies]
