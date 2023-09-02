@@ -565,9 +565,7 @@ impl<T, const N: usize> Drop for VLock<T, N> {
         {
             // SAFETY: Length counts inits. It's safe to assume that the first
             // length MaybeUninits are inits.
-            unsafe {
-                init.assume_init_drop();
-            }
+            unsafe { init.assume_init_drop() };
         }
     }
 }
