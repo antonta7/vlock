@@ -523,6 +523,63 @@ impl<T, const N: usize> VLock<T, N> {
     }
 }
 
+impl<T: Default, const N: usize> VLock<T, N> {
+    /// Same as [`VLock::update`], except that new versions are initialized
+    /// with [`Default::default`].
+    ///
+    /// # Panics
+    ///
+    /// See [`VLock::update`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vlock::VLock;
+    ///
+    /// let lock: VLock<_, 2> = 10.into();
+    /// assert_eq!(*lock.read(), 10);
+    /// lock.update_default(|_, value| *value += 20);
+    /// assert_eq!(*lock.read(), 20);
+    /// lock.update_default(|_, value| *value += 20);
+    /// assert_eq!(*lock.read(), 30);
+    /// ```
+    #[inline(always)]
+    pub fn update_default<F>(&self, f: F)
+    where
+        F: FnOnce(&T, &mut T),
+    {
+        self.update(f, T::default);
+    }
+
+    /// Same as [`VLock::compare_update`], except that new versions are
+    /// initialized with [`Default::default`].
+    ///
+    /// # Panics
+    ///
+    /// See [`VLock::update`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vlock::VLock;
+    ///
+    /// let lock: VLock<_, 2> = 10.into();
+    /// assert_eq!(*lock.read(), 10);
+    /// assert!(!lock.compare_update_default(|curr| *curr > 30, |_, value| *value += 20));
+    /// assert_eq!(*lock.read(), 10);
+    /// assert!(lock.compare_update_default(|curr| *curr < 30, |_, value| *value += 20));
+    /// assert_eq!(*lock.read(), 20);
+    /// ```
+    #[inline(always)]
+    pub fn compare_update_default<P, F>(&self, pred: P, f: F) -> bool
+    where
+        P: FnOnce(&T) -> bool,
+        F: FnOnce(&T, &mut T),
+    {
+        self.compare_update(pred, f, T::default)
+    }
+}
+
 impl<T, const N: usize> From<T> for VLock<T, N> {
     #[inline(always)]
     fn from(value: T) -> Self {
