@@ -1,0 +1,30 @@
+image: archlinux
+packages:
+  - rustup
+sources:
+  - git@git.sr.ht:~antonta/vlock
+secrets:
+  - 712fa3ad-a98c-4d5f-9b22-c4f8ca3be96a
+environment:
+  RUSTFLAGS: -D warnings
+tasks:
+  - setup: |
+      rustup toolchain install nightly stable
+      cd vlock/
+      rustup run stable cargo fetch
+      rustup update stable && rustup default stable && rustup component add clippy
+      rustup update nightly && rustup default nightly && rustup component add clippy
+  - stable: |
+      cd vlock/
+      rustup default stable
+      cargo build --verbose --future-incompat-report
+      cargo test --verbose --future-incompat-report
+      cargo clippy --verbose
+      cargo doc --verbose
+  - nightly: |
+      cd vlock/
+      rustup default nightly
+      cargo build --verbose --future-incompat-report
+      cargo test --verbose --future-incompat-report
+      cargo clippy --verbose
+      cargo doc --verbose
