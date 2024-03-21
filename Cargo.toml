@@ -1,12 +1,12 @@
 [package]
 name = "vlock"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 
-authors = ["Anton Tereshchenkov"]
+authors = ["antonta <work@antonta.net>"]
 description = "A fast and scalable multi-version shared state lock with wait-free read access."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/antonta0/vlock"
+repository = "https://git.sr.ht/~antonta/vlock"
 keywords = ["concurrency", "lock", "rwlock", "thread", "wait-free"]
 categories = ["concurrency", "memory-management"]
 
