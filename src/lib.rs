@@ -258,11 +258,10 @@ impl<T, const N: usize> VLock<T, N> {
     #[must_use]
     #[inline(always)]
     pub fn read(&self) -> ReadRef<'_, T, N> {
-        // Relaxed is OK. Even if the old version is retrieved just before the
-        // update happens, the counter will correctly reflect the state, because
-        // retrieving offset and setting the counter is the same atomic operation.
-        // In other words, we care only about atomicity here.
-        let state = self.state.fetch_add(Self::STEP, atomic::Ordering::Relaxed);
+        // Taking Acquire to ensure that access to the new version happens
+        // after all mutations complete. It's OK to store the counter with
+        // Relaxed ordering.
+        let state = self.state.fetch_add(Self::STEP, atomic::Ordering::Acquire);
         assert_ne!(
             state.wrapping_add(Self::STEP),
             state & Self::OFFSET,
@@ -474,10 +473,10 @@ impl<T, const N: usize> VLock<T, N> {
         // that version. This is the point when the new read() calls start to
         // refer to the new version.
         //
-        // Changes to the offset are behind a lock. Regarding the counter, we are
-        // interested only in atomic operation in read(). So, using Relaxed here
-        // should be OK.
-        let prev_state = self.state.swap(new_offset, atomic::Ordering::Relaxed);
+        // Changes to the offset are behind a lock. Regarding the read(), ensure
+        // that the version at the new_offset has been written before subsequent
+        // loads, so using Release here.
+        let prev_state = self.state.swap(new_offset, atomic::Ordering::Release);
 
         // Who knows what is going on on a computer this is running on.
         assert_eq!(
