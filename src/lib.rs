@@ -785,7 +785,7 @@ impl<T, const N: usize> hash::Hash for ReadRef<'_, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> ops::Deref for ReadRef<'a, T, N> {
+impl<T, const N: usize> ops::Deref for ReadRef<'_, T, N> {
     type Target = T;
 
     #[inline(always)]
