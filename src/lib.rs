@@ -216,13 +216,13 @@ impl<T, const N: usize> VLock<T, N> {
 
     #[inline(always)]
     unsafe fn at(&self, offset: usize) -> &mem::MaybeUninit<Data<T>> {
-        &(&*self.data.get())[offset]
+        &(*self.data.get())[offset]
     }
 
     #[allow(clippy::mut_from_ref)]
     #[inline(always)]
     unsafe fn at_mut(&self, offset: usize) -> &mut mem::MaybeUninit<Data<T>> {
-        &mut (&mut *self.data.get())[offset]
+        &mut (*self.data.get())[offset]
     }
 
     /// Acquires a reference to the current version of `T`.
